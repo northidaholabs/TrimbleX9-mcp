@@ -38,6 +38,9 @@ shadow on the ground:
        alt="Station 1's preview: the clock tower marked as seen, the wing's far side as hidden, a lamp post as the landmark, and a tripod drawn its real size on the pavement beyond it, casting a shadow.">
 </p>
 
+Tested with Claude Opus 5.5 and Grok 4.6 as the model in the chat: given the
+same plan, both put the tripod on the same spot of pavement.
+
 **Interoperability** project: written from scratch against the instrument's
 network API, with behavior verified on a live instrument. No vendor code,
 firmware or vendor documentation is included or redistributed. How the API
