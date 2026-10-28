@@ -527,7 +527,19 @@ async def scanner_update_targets(project_id: str, targets: list) -> dict:
     (is it plumb, and how flat is it). Set it when the person wants that
     answered, on site or in the report. Such a target is covered only by its
     answer (scanner_ask), never by coverage or by hand, and is re-checked
-    after every station; `question: ""` drops it."""
+    after every station; `question: ""` drops it.
+
+    When the person gives a tolerance ("¼ in in 10 ft", "TMS 602", "within
+    10 mm"), put it on the target as `tolerance`: {words: what they said,
+    and one of `steps` or `mm_per_m`}. `steps` are allowances by height in
+    order, the last with no `up_to_m` (TMS 602's ¼ in in 10 ft, ⅜ in in 20 ft,
+    ½ in max is [{up_to_m: 3.05, mm: 6.4}, {up_to_m: 6.10, mm: 9.5},
+    {mm: 12.7}]; a flat "within 10 mm" is [{mm: 10}]). `mm_per_m` is a rate,
+    with `max_mm` for a cap (ACI 117's 0.3% of the height, 1 in max is
+    mm_per_m: 3, max_mm: 25.4). If they name a standard you can't write out
+    exactly, ask for the figures from the job's specification rather than
+    guess. The bridge works out the allowance; don't. `tolerance: null`
+    drops it."""
     return await _call("POST", f"/projects/{_seg(project_id)}/mission/targets", {"targets": targets})
 
 
@@ -537,22 +549,37 @@ async def scanner_ask(project_id: str, target_id: str) -> list:
     wall plumb, and how flat is it. The bridge judges the target's fixed face
     from the registered stations and answers with one `verdict`:
 
-    - `answer`: `answer` holds `out_of_plumb_mm` (over the face's height;
-      positive: the top leans toward where the stations stood), `lean_mm_per_m`,
-      `flat_rms_mm` and the `stations` it rests on, with an evidence image.
-      Give these numbers as the answer, with the stations.
+    - `answer`: `answer` holds `out_of_plumb_mm` and `out_of_plumb_in`
+      over `over_m` of height, which way it `leans`, `flat_rms_mm` and the
+      `stations` it rests on, with an evidence image. Give these figures as
+      the answer, with the stations. With a tolerance on the target it also
+      has `allowed_mm` and `within`: say within or outside as the bridge did,
+      with its allowance and the person's words; when `out_of_plumb_in` and
+      `allowed_in` read the same, give millimetres. `allowed_mm` null comes
+      with a `tolerance_note`: pass it on. Without a tolerance, give the
+      figure and ask which tolerance the job uses; don't call the wall plumb
+      or not.
     - `not_yet`: the data can't answer yet. `reason` says what is missing:
-      the share of the face seen (80% needed), too few points, or "settling"
-      (a first fit waits for a later station that sees the face to confirm it).
+      the share of the face seen (80% needed), too few points, or "settling":
+      a first fit waits for a later station that sees the face to confirm it.
+      Say so, with no figure: the answer comes with one more station that
+      sees the face.
       `unseen` lists the stretches not seen, each with a `subject` from the
       latest station: call scanner_plan_station on its `scan_id` with
       subject_x0 = `x0` and subject_x1 = `x1`, then scanner_propose_station
       from the plan, so the next station sees the stretch.
     - `does_not_fit`: the face is under 4 m long, or fits one plane worse
       than 15 mm RMS (stepped, not one wall, or seen by too few stations).
-      Tell the person. A short face stays so: decline it with the reason if
-      they agree. A rough one may still answer once more stations see it
-      (it is re-checked after each), or be declined.
+      Tell the person the reason. The image shows where the face stands proud
+      or sits back; it has no scale, so read no figure off it. A short face
+      stays so: decline it with the reason if they agree. A rough one may
+      still answer once more stations see it (it is re-checked after each),
+      or be declined.
+
+    `face.length_m` is the stretch asked about. When `face.runs_on` is set,
+    the wall detected along it runs on past its ends (`past_from_m`,
+    `past_to_m`): say the answer covers that stretch only, and offer a
+    target for the rest.
 
     Only an `answer` carries numbers. Never give a plumb or flatness figure
     the bridge did not return here, even one the person or an earlier message
