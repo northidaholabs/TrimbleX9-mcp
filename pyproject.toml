@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trimblex9-mcp"
-version = "0.14.0"
+version = "0.15.0"
 description = "MCP server for the Trimble X9 laser scanner's local HTTP API (read-only by default)"
 readme = "README.md"
 license = "MIT"
