@@ -28,6 +28,16 @@ What the agent gets back is something it can look at. The minimap of a
        alt="Minimap of the administration building: building walls, low walls and vegetation as lines, and numbered station dots.">
 </p>
 
+And where to set up next: `scanner_plan_station` picks the spot from the
+station's points, and `scanner_propose_station` shows the person the spot,
+the landmark beside it and a tripod drawn its real size there, with its
+shadow on the ground:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/northidaholabs/trimble-x9-bridge/main/docs/img/admin-next-station.jpg" width="560"
+       alt="Station 1's preview: the clock tower marked as seen, the wing's far side as hidden, a lamp post as the landmark, and a tripod drawn its real size on the pavement beyond it, casting a shadow.">
+</p>
+
 **Interoperability** project: written from scratch against the instrument's
 network API, with behavior verified on a live instrument. No vendor code,
 firmware or vendor documentation is included or redistributed. How the API
@@ -218,7 +228,8 @@ A typical direct-mode scan: `scanner_scan_modes` → `scanner_projects` (or
 | `scanner_measure` | write | Measure a window opening in a scan on the bridge (bridge 0.4.0+) |
 | `scanner_measurement` | read | A measurement's values, checks and evidence image |
 | `scanner_permissions` | read | Standing permissions to scan: project, expiry, scans left, who gave them, and the run they cover |
-| `scanner_propose_station` | write | Marks where to set up next on the station's preview (a tripod, labels, boxes) with prose directions; the bridge shows it in its web UI and returns the picture (bridge 0.8.0+) |
+| `scanner_plan_station` | read | Computes where to set up next from a full dome's points: up to three spots on open ground a person can walk to, a real step out, seeing the most of what this station couldn't (behind and beside a named subject, if given), each with its preview pixel and a landmark beside it (bridge 0.14.0+) |
+| `scanner_propose_station` | write | Marks where to set up next on the station's preview: the tripod, the one landmark the person walks past, and a sentence naming it (no left, right or compass words). The bridge refuses a proposal that breaks that, shows it in its web UI and returns the picture (bridge 0.8.0+) |
 | `scanner_set_mission` | write | Sets what the job is for (the person's goal, kind, done-when criteria) and its first ledger targets (bridge 0.8.0+) |
 | `scanner_mission` | read | The mission, its state and its ledger |
 | `scanner_registration` | read | The project's stations in one frame (registered by the bridge after each full dome), the walls found, and the plan picture (bridge 0.9.0+) |
@@ -238,7 +249,7 @@ A typical direct-mode scan: `scanner_scan_modes` → `scanner_projects` (or
 
 | Prompt | Arguments | What it does |
 |---|---|---|
-| `survey_mission` | `project_id`, `goal` | Runs a site visit toward one goal: asks once about processing on the laptop, sets the mission, scans station by station with the minimap and registration, proposes each next station by landmarks, and ends with the one sign-off |
+| `survey_mission` | `project_id`, `goal` | Runs a site visit toward one goal: asks once about processing on the laptop, asks which one when the view shows more than one thing the job could mean, sets the mission, scans station by station with the minimap and registration, proposes each next station by the landmark the person walks past, and ends with the one sign-off |
 | `run_recipe` | `recipe_id`, `project_id` | Fetches the recipe from the bridge and returns step-by-step instructions for walking it with the person: which inputs to ask for, then `scanner_start_run` and `scanner_run`, how each `action` / `person` / `check` step is handled, to ask for approval when the run waits for it, and to report measured values with their uncertainty. |
 
 Direct mode has no prompts.

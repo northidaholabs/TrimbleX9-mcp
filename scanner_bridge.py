@@ -400,6 +400,36 @@ async def scanner_measurement(measurement_id: str) -> list:
     return [json.dumps(m, indent=2), Image(data=r.content, format="png")]
 
 
+@tool(annotations=READ)
+async def scanner_plan_station(scan_id: str, subject_x0: int | None = None, subject_x1: int | None = None) -> dict:
+    """Where to set up next, computed from this full dome's points (bridge
+    0.14.0+): up to three spots, best first, each on open ground a person can
+    walk to, a real step out (`min_step_m` scales with the place: metres in a
+    room, tens on a campus), seeing the most ground this station couldn't
+    while still sharing enough surface with it to be registered. Each has
+    `preview_px` (the ground there, on this station's preview), `distance_m`,
+    `walk_m`, `sees_hidden_m2`, and a `landmark` beside it with its own
+    `preview_px`, `height_m`, `footprint_m2` and `shape`: "post" (under 1 m²:
+    a pole, a lamp, a sign, a trunk; name the post itself, not the tree or
+    wall behind it) or "mass" (a wall, a building, a hedge).
+
+    Pass the subject as preview columns (`subject_x0`, `subject_x1`; x1 < x0
+    when it crosses the panorama's seam) once you know what the job is about,
+    so only ground behind and beside it counts. Without one, the plan follows
+    the biggest hidden ground, which may be a lawn behind trees.
+
+    Use the first spot unless the person or the mission says otherwise:
+    scanner_propose_station with the marker at its `preview_px` and the
+    landmark label at the landmark's `preview_px`, named from what you see
+    there in the preview. No spots comes with a `reason` (nothing left hidden,
+    not a full dome, no open ground). The first call on a scan decodes it
+    (seconds)."""
+    params = None
+    if subject_x0 is not None and subject_x1 is not None:
+        params = {"subject": f"{subject_x0},{subject_x1}"}
+    return await _call("GET", f"/scans/{_seg(scan_id)}/next-station/plan", params=params)
+
+
 @tool(annotations=WRITE)
 async def scanner_propose_station(scan_id: str, note: str, marker_x: int, marker_y: int, marker_label: str = "",
                                   labels: list | None = None, boxes: list | None = None) -> list:
@@ -408,14 +438,36 @@ async def scanner_propose_station(scan_id: str, note: str, marker_x: int, marker
     with your labels and boxes, and shows it in its web UI with your `note`.
     Returns the picture; show it in the chat too.
 
-    Coordinates are preview pixels (scanner_preview gives the size): put the
-    marker on the ground where the tripod should stand. `note`: the directions
-    in prose, by landmarks the person can see ("carry the tripod past the house
-    corner onto the path, about 3 m beyond it"), never compass words.
-    `labels`: [{x, y, text, kind}] and `boxes`: [{x0, y0, x1, y1, text, kind}],
-    kind "seen" (green: covered here), "hidden" (red: what the next station is
-    for) or "landmark" (white: something to walk by). At most 12 in all,
-    texts up to 80 characters. A newer proposal for the scan replaces this one."""
+    The person has to match one glance to the ground in front of them, so the
+    proposal is the tripod, the one thing they walk past to reach it, and a
+    sentence naming that thing. The subject is whatever the mission is about:
+    a building, a window, an object, a site. Before choosing, if this view
+    shows more than one thing the job could mean (two buildings, two windows,
+    two objects), ask the person which one; don't pick for them.
+
+    Coordinates are preview pixels (scanner_preview gives the size). Start
+    from scanner_plan_station: its first spot's `preview_px` is the marker and
+    its landmark's `preview_px` the landmark label. Move off it only for a
+    reason the plan can't see (the job needs a window square-on, the person
+    said the lawn is out of bounds), and keep the tripod on ground where the
+    open part of the subject comes into view and in sight of something this
+    station saw so it can be registered.
+    `marker_label` goes under "SET UP HERE": where on the ground ("on the
+    pavement, ~5 m past the lamp post"), or empty; not a name for the spot.
+    `labels`: [{x, y, text, kind}], at least one "landmark" (white: the thing
+    to walk past, placed on it) and optionally "seen" (green) or "hidden" (red:
+    what the next station is for). `boxes`: [{x0, y0, x1, y1, text, kind}],
+    the same kinds. At most 3 labels and boxes in all, texts up to 80
+    characters (a landmark's up to 30: "lamp post", not where it stands),
+    each within a quarter of the preview's width of the marker.
+    `note`: one or two sentences that name the landmark as labelled ("carry the
+    tripod past the shed door, onto the path, about 3 m beyond it"). No left,
+    right, clockwise or compass words: they change as the person turns, and
+    the scan has no north. The bridge refuses a proposal that breaks these.
+
+    Then look at the returned picture: the landmark's dot on the landmark, the
+    tripod on walkable ground beside it, the note matching both. If not,
+    propose again. A newer proposal for the scan replaces this one."""
     body = {"marker": {"x": marker_x, "y": marker_y, "label": marker_label}, "note": note,
             "labels": labels or [], "boxes": boxes or []}
     v = await _call("PUT", f"/scans/{_seg(scan_id)}/next-station", body)
@@ -882,7 +934,9 @@ async def survey_mission(project_id: str, goal: str) -> str:
         "0. scanner_processing: if no worker is listed and you haven't asked on this laptop before, ask once whether to "
         "process scans on the laptop (faster) and start the worker if they agree; remember the answer.",
         "1. scanner_set_mission: their words as goal, the kind (exterior, windows, room or custom), and done_when: "
-        "criteria concrete enough to check (spacing, which walls, no shadows on what).",
+        "criteria concrete enough to check (spacing, which walls, no shadows on what). "
+        "If the first station's view shows more than one thing their words could mean (two buildings, two windows, "
+        "two objects), ask them which one before the mission names it.",
         "2. At each station: a full dome (scanner_start_scan; it asks the person once for the visit's permission), "
         "then scanner_coverage and scanner_preview. Update the ledger with scanner_update_targets: add every target "
         "you can see or infer (each facade, each window), mark what this station covered with its scan id, keep the rest open.",
@@ -890,16 +944,21 @@ async def survey_mission(project_id: str, goal: str) -> str:
         "From the second station on, the bridge registers each dome into one frame by itself: read scanner_registration "
         "(wait while registering_job_id is set). Give each facade target its wall_id from the plan; the bridge then marks "
         "facades covered from the geometry, so don't mark them by eye.",
-        "3. While targets are open: choose the next station for what is still open, not the biggest shadow "
+        ("3. While targets are open: choose the next station for what is still open, not the biggest shadow "
         "(the plan shows open walls in red; scanner_wall_face gives their unseen stretches). "
         "Keep each new station in sight of walls an earlier station saw, or it can't be registered; "
         "a station that isn't confirmed (doubtful, ambiguous, unplaced) doesn't count, so the next one should settle it. "
-        "scanner_propose_station marks it on the preview with directions by landmarks (never compass words); "
-        "tell the person in one or two lines and wait for them to say they've moved.",
+        "scanner_plan_station computes the spot from the points: pass the subject's preview columns, and take its "
+        "first spot unless the ledger needs another (an open wall it doesn't face). "
+        "scanner_propose_station marks it on the preview: the tripod, the one landmark they walk past to reach it, "
+        "and a sentence naming that landmark (never left, right or compass words). Look at the picture it returns "
+        "and propose again if the dot isn't on the landmark or the tripod isn't on ground beside it. "
+         "Tell the person that sentence and wait for them to say they've moved."),
         "4. A target you can't cover (a locked yard, a neighbour's wall) is declined, with the reason.",
         "5. When nothing is open: scanner_ready_to_leave with a two-or-three-line summary; the person signs off.",
         "",
-        "Ask the person nothing else. Report at the end: stations used, the ledger, and anything declined.",
+        "Ask the person nothing else, except which one when the view shows more than one thing the job could mean. "
+        "Report at the end: stations used, the ledger, and anything declined.",
     ])
 
 
