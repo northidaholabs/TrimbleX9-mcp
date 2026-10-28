@@ -57,13 +57,13 @@ Python 3.10 or later. Install from the GitHub release tag; this provides the
 console script `trimblex9-mcp`, which speaks MCP over stdio.
 
 ```bash
-pip install "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.13.0"
+pip install "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.14.0"
 # or, isolated:
-pipx install "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.13.0"
+pipx install "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.14.0"
 # or run without installing:
-uvx --from "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.13.0" trimblex9-mcp
+uvx --from "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.14.0" trimblex9-mcp
 # no git on the host (e.g. a minimal Raspberry Pi image):
-pip install https://github.com/northidaholabs/TrimbleX9-mcp/archive/refs/tags/v0.13.0.tar.gz
+pip install https://github.com/northidaholabs/TrimbleX9-mcp/archive/refs/tags/v0.14.0.tar.gz
 ```
 
 Dependencies: `mcp` and `httpx` (see [Compatibility](#compatibility)).
@@ -76,7 +76,7 @@ OS trixie: CPython 3.13, aarch64), copy it over and install from it:
 
 ```bash
 # on a machine with internet
-tag=v0.13.0
+tag=v0.14.0
 pip wheel --no-deps -w wheelhouse "git+https://github.com/northidaholabs/TrimbleX9-mcp@$tag"
 pip download -d wheelhouse --only-binary=:all: --platform manylinux2014_aarch64 \
   --python-version 3.13 --implementation cp "mcp>=1.7,<3" "httpx>=0.27"
@@ -466,7 +466,7 @@ claude mcp add trimblex9 \
 Without installing first:
 
 ```bash
-claude mcp add trimblex9 -- uvx --from "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.13.0" trimblex9-mcp
+claude mcp add trimblex9 -- uvx --from "git+https://github.com/northidaholabs/TrimbleX9-mcp@v0.14.0" trimblex9-mcp
 ```
 
 Bridge mode:
