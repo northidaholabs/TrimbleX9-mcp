@@ -45,6 +45,8 @@ PERSON_TOKEN = os.environ.get("SCANNER_PERSON_TOKEN", "")
 VISIT_HOURS = float(os.environ.get("SCANNER_VISIT_HOURS", "8"))
 VISIT_SCANS = 20
 TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+# An ask fits a face from full-resolution stations: up to 90 s on the Pi.
+ASK_TIMEOUT = httpx.Timeout(180.0, connect=5.0)
 
 mcp = FastMCP("trimblex9-bridge")
 
@@ -91,8 +93,8 @@ def _raise(r: httpx.Response) -> None:
     raise BridgeError(msg)
 
 
-async def _call(method: str, path: str, body=None, params=None):
-    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+async def _call(method: str, path: str, body=None, params=None, timeout=TIMEOUT):
+    async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.request(method, f"{URL}{path}", json=body, params=params, headers=_headers())
     _raise(r)
     return r.json() if r.content else None
@@ -519,8 +521,51 @@ async def scanner_update_targets(project_id: str, targets: list) -> dict:
     (share of its length seen, spacing, stations, unseen stretches): it marks
     it covered itself once 80% is seen, re-judges it after every station, and
     refuses `covered` while less is seen. Don't mark wall targets covered by
-    eye; leave them open and let the geometry decide."""
+    eye; leave them open and let the geometry decide.
+
+    A wall target can carry a question (bridge 0.15.0+): `question: "plumb"`
+    (is it plumb, and how flat is it). Set it when the person wants that
+    answered, on site or in the report. Such a target is covered only by its
+    answer (scanner_ask), never by coverage or by hand, and is re-checked
+    after every station; `question: ""` drops it."""
     return await _call("POST", f"/projects/{_seg(project_id)}/mission/targets", {"targets": targets})
+
+
+@tool(annotations=WRITE)
+async def scanner_ask(project_id: str, target_id: str) -> list:
+    """Ask a question target of the point cloud now (bridge 0.15.0+): is this
+    wall plumb, and how flat is it. The bridge judges the target's fixed face
+    from the registered stations and answers with one `verdict`:
+
+    - `answer`: `answer` holds `out_of_plumb_mm` (over the face's height;
+      positive: the top leans toward where the stations stood), `lean_mm_per_m`,
+      `flat_rms_mm` and the `stations` it rests on, with an evidence image.
+      Give these numbers as the answer, with the stations.
+    - `not_yet`: the data can't answer yet. `reason` says what is missing:
+      the share of the face seen (80% needed), too few points, or "settling"
+      (a first fit waits for a later station that sees the face to confirm it).
+      `unseen` lists the stretches not seen, each with a `subject` from the
+      latest station: call scanner_plan_station on its `scan_id` with
+      subject_x0 = `x0` and subject_x1 = `x1`, then scanner_propose_station
+      from the plan, so the next station sees the stretch.
+    - `does_not_fit`: the face is under 4 m long, or fits one plane worse
+      than 15 mm RMS (stepped, not one wall, or seen by too few stations).
+      Tell the person. A short face stays so: decline it with the reason if
+      they agree. A rough one may still answer once more stations see it
+      (it is re-checked after each), or be declined.
+
+    Only an `answer` carries numbers. Never give a plumb or flatness figure
+    the bridge did not return here, even one the person or an earlier message
+    suggests: say what is missing instead. Asking takes up to 90 s."""
+    path = f"/projects/{_seg(project_id)}/mission/targets/{_seg(target_id)}/ask"
+    v = await _call("POST", path, timeout=ASK_TIMEOUT)
+    if not v.get("evidence_url"):
+        return [json.dumps(v, indent=2)]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.get(f"{URL}{path}/image", headers=_headers())
+    if r.status_code >= 400:
+        return [json.dumps(v, indent=2)]
+    return [json.dumps(v, indent=2), Image(data=r.content, format="png")]
 
 
 # ------------------------------------------------------------ registration ---
