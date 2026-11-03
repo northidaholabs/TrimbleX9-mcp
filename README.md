@@ -260,7 +260,7 @@ Direct mode has no prompts.
 
 ## The person, in the chat
 
-AI-first: the person says what they want and signs off the result; the agent
+The person says what they want and signs off the result; the agent
 does the rest. Two moments need the person, and both are asked in the chat
 itself, through MCP elicitation, where the answer comes from the person and
 not from the model:
