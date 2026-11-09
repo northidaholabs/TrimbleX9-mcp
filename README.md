@@ -48,6 +48,10 @@ knowledge was obtained is recorded in [PROVENANCE.md](PROVENANCE.md).
 Independent project, **not affiliated with or endorsed by Trimble Inc.**;
 "Trimble" and "X9" are trademarks of their respective owners.
 
+I built this clean-room from how the scanner behaves and the data it
+returns. It uses no Trimble source code, internal documents, or confidential
+information, including anything from my past employment at Trimble.
+
 Contents: [Install](#install) · [Modes](#modes) ·
 [Configuration](#configuration) · [Tools](#tools) · [Safety](#safety) ·
 [Errors](#errors) · [Client configuration](#client-configuration) ·
