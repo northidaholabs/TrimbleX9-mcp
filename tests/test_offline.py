@@ -8,6 +8,7 @@ import struct
 import sys
 import tempfile
 import threading
+from typing import ClassVar
 
 import pytest
 
@@ -83,7 +84,7 @@ DL = tempfile.mkdtemp()
 os.environ.update(SCANNER_BASE=f"http://127.0.0.1:{srv.server_address[1]}/api/v1",
                   SCANNER_ALLOW_ACTUATION="1", SCANNER_DOWNLOAD_DIR=DL)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import scanner_mcp as m  # noqa: E402
+import scanner_mcp as m
 
 
 def call(name, **args):
@@ -100,7 +101,7 @@ def call(name, **args):
 def raises(name, **args):
     try:
         call(name, **args)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return str(e)
     raise AssertionError(f"{name} did not raise")
 
@@ -115,7 +116,7 @@ def test_delete_scan_by_uuid_survives_renumbering():
 
 def test_launch_validates_locally():
     reset()
-    ok = dict(project_name="probe", project_uuid=P_UUID)
+    ok = {"project_name": "probe", "project_uuid": P_UUID}
     assert "unknown scan_mode" in raises("scanner_launch_scan", scan_mode="BOGUS", **ok)
     assert "no project" in raises("scanner_launch_scan", project_name="other",
                                   project_uuid=P_UUID, scan_mode="HS_L1")
@@ -198,7 +199,7 @@ def test_truncated_files_are_readable_errors():
         fh.write(b"\xff\xd8\xff\xe0\x00")  # cut off inside a segment length
     _fake_scan("ok.tzf", 10, 20, 1e-3, 0.0, 0.0)
     _fake_jpeg("ok.jpg", 20, 10)
-    box = dict(x0=0, y0=0, x1=1, y1=1)
+    box = {"x0": 0, "y0": 0, "x1": 1, "y1": 1}
     assert "short.tzf is truncated" in raises("scanner_preview_to_angles", scan_filename="short.tzf",
                                               preview_filename="ok.jpg", **box)
     assert "short.jpg is a truncated" in raises("scanner_preview_to_angles", scan_filename="ok.tzf",
@@ -232,7 +233,7 @@ def test_unreachable_instrument_is_a_readable_error(monkeypatch):
 # ------------------------------------------- bridge-mode helpers, offline -----
 
 class BridgeStub(http.server.BaseHTTPRequestHandler):
-    paths = []
+    paths: ClassVar[list] = []
 
     def _reply(self, code, body, ctype="application/json"):
         self.send_response(code)
@@ -259,7 +260,7 @@ class BridgeStub(http.server.BaseHTTPRequestHandler):
 
 bsrv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), BridgeStub)
 threading.Thread(target=bsrv.serve_forever, daemon=True).start()
-import scanner_bridge as b  # noqa: E402
+import scanner_bridge as b
 
 
 def bcall(name, *args):
@@ -284,7 +285,7 @@ def test_bridge_ids_are_escaped(monkeypatch):
 
 def test_bridge_default_download_names_are_sanitised(monkeypatch):
     bridge(monkeypatch)
-    monkeypatch.setattr(b.direct, "DOWNLOAD_DIR", DL)
+    monkeypatch.setattr(b.direct, "DOWNLOAD_DIR", os.path.realpath(DL))  # as the module resolves it; macOS temp dirs sit behind a symlink
     d = bcall("scanner_download_export", "exp/1:2")
     assert os.path.basename(d["path"]) == "exp_1_2.las" and d["bytes"] == 4
     assert BridgeStub.paths[-1] == "/v1/exports/exp%2F1%3A2/file"

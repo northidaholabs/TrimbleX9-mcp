@@ -1,7 +1,9 @@
 """Bridge-mode tests: the MCP tools against a real x9-bridge and x9-mock.
 
 Skipped unless X9_BRIDGE_BIN points at a directory with the `x9-bridge` and
-`x9-mock` binaries (from trimble-x9-bridge: cargo build --release). With
+`x9-mock` binaries (from trimble-x9-bridge: cargo build --release, or a
+release archive). The window recipe is taken from beside a source checkout,
+or from X9_RECIPE when the binaries come from a release archive. With
 X9_FIXTURES (dome/area .tzf + .jpg, as for the bridge's e2e test) the preview,
 aim and export tools are exercised too.
 
@@ -14,9 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
-
 import types
+import urllib.request
 
 import pytest
 
@@ -26,6 +27,14 @@ MOCK, BRIDGE = "127.0.0.1:34611", "127.0.0.1:8811"
 AGENT, OPERATOR = "agent-token-0123456789abcdef", "operator-token-0123456789abcdef"
 
 pytestmark = pytest.mark.skipif(not BIN, reason="set X9_BRIDGE_BIN to run bridge-mode tests")
+
+try:  # Asking the person in the chat needs an SDK with elicitation (mcp 1.7 has none).
+    from mcp.types import ClientCapabilities, ElicitationCapability
+    ClientCapabilities(elicitation=ElicitationCapability())
+    HAS_ELICITATION = True
+except Exception:
+    HAS_ELICITATION = False
+needs_elicitation = pytest.mark.skipif(not HAS_ELICITATION, reason="this mcp SDK has no elicitation")
 
 
 def _up(url):
@@ -66,7 +75,8 @@ def tools():
         env_m["X9_MOCK_FIXTURES"] = FIX
     procs = [subprocess.Popen([f"{BIN}/x9-mock"], env=env_m, stderr=subprocess.DEVNULL)]
     _up(f"http://{MOCK}/api/v1/status")
-    recipe = os.path.join(os.path.dirname(BIN.rstrip("/")), "..", "crates", "x9-bridge", "tests", "recipes", "window-measurement.toml")
+    recipe = os.environ.get("X9_RECIPE") or os.path.join(
+        os.path.dirname(BIN.rstrip("/")), "..", "crates", "x9-bridge", "tests", "recipes", "window-measurement.toml")
     if os.path.exists(recipe):
         with open(recipe) as src, open(os.path.join(recipes, "window-measurement.toml"), "w") as dst:
             dst.write(src.read())
@@ -164,7 +174,9 @@ def test_preview_aim_export(tools):
     ej = run(fn(tools.scanner_export)(station, "copc", "none"))
     w = run(fn(tools.scanner_wait_for_job)(_Ctx(), ej["job_id"], timeout_s=240))
     d = run(fn(tools.scanner_download_export)(w["job"]["result"]["export_id"]))
-    assert d["path"].endswith(".copc.laz") and open(d["path"], "rb").read(4) == b"LASF"
+    assert d["path"].endswith(".copc.laz")
+    with open(d["path"], "rb") as fh:
+        assert fh.read(4) == b"LASF"
 
 
 def test_recipe_prompt_and_run(tools):
@@ -207,7 +219,10 @@ def _wait_run(tools, rid, pred, timeout=300):
     return r
 
 
+@needs_elicitation
 def test_permission_is_asked_once_in_the_chat(tools):
+    if not run(fn(tools.scanner_recipes)()):
+        pytest.skip("window recipe not found: set X9_RECIPE or use a source checkout")
     p = run(fn(tools.scanner_create_project)(f"chat-{int(time.time() * 1000)}"))["project_id"]
     no = _Person([{"allow": False}])
     with pytest.raises(Exception, match="did not allow"):
@@ -286,6 +301,7 @@ def test_relayed_sign_off_is_recorded(tools):
     assert r["authorized_by"][0]["note"].startswith("relayed by the agent")
 
 
+@needs_elicitation
 def test_a_plain_scan_asks_permission_once_too(tools):
     p = run(fn(tools.scanner_create_project)(f"scan-{int(time.time() * 1000)}"))["project_id"]
     person = _Person([{"allow": True}])
@@ -333,6 +349,7 @@ def test_plan_station_computes_spots_from_the_points(tools):
         run(fn(tools.scanner_plan_station)(station, 523, 99999))
 
 
+@needs_elicitation
 def test_mission_ledger_and_sign_off_in_the_chat(tools):
     p = run(fn(tools.scanner_create_project)(f"mission-{int(time.time() * 1000)}"))["project_id"]
     m = run(fn(tools.scanner_set_mission)(p, "Scan the exterior of the house", "exterior",

@@ -31,3 +31,12 @@ Repository = "https://github.com/northidaholabs/TrimbleX9-mcp"
 
 [tool.setuptools]
 py-modules = ["scanner_mcp", "scanner_bridge"]
+
+[tool.ruff.lint]
+# ruff's default rules, minus four patterns this code uses on purpose.
+ignore = [
+    "BLE001",   # A progress report or capability probe must never fail a tool call, whatever it raises.
+    "S110",     # Same: those handlers pass on purpose.
+    "ASYNC230", # Downloads write each received chunk to a local file; the writes are small and ordered.
+    "SIM117",   # The stream is nested under its client so the order of closing reads plainly.
+]
