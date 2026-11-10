@@ -28,6 +28,14 @@ AGENT, OPERATOR = "agent-token-0123456789abcdef", "operator-token-0123456789abcd
 
 pytestmark = pytest.mark.skipif(not BIN, reason="set X9_BRIDGE_BIN to run bridge-mode tests")
 
+try:  # Asking the person in the chat needs an SDK with elicitation (mcp 1.7 has none).
+    from mcp.types import ClientCapabilities, ElicitationCapability
+    ClientCapabilities(elicitation=ElicitationCapability())
+    HAS_ELICITATION = True
+except Exception:
+    HAS_ELICITATION = False
+needs_elicitation = pytest.mark.skipif(not HAS_ELICITATION, reason="this mcp SDK has no elicitation")
+
 
 def _up(url):
     for _ in range(100):
@@ -211,6 +219,7 @@ def _wait_run(tools, rid, pred, timeout=300):
     return r
 
 
+@needs_elicitation
 def test_permission_is_asked_once_in_the_chat(tools):
     if not run(fn(tools.scanner_recipes)()):
         pytest.skip("window recipe not found: set X9_RECIPE or use a source checkout")
@@ -292,6 +301,7 @@ def test_relayed_sign_off_is_recorded(tools):
     assert r["authorized_by"][0]["note"].startswith("relayed by the agent")
 
 
+@needs_elicitation
 def test_a_plain_scan_asks_permission_once_too(tools):
     p = run(fn(tools.scanner_create_project)(f"scan-{int(time.time() * 1000)}"))["project_id"]
     person = _Person([{"allow": True}])
@@ -339,6 +349,7 @@ def test_plan_station_computes_spots_from_the_points(tools):
         run(fn(tools.scanner_plan_station)(station, 523, 99999))
 
 
+@needs_elicitation
 def test_mission_ledger_and_sign_off_in_the_chat(tools):
     p = run(fn(tools.scanner_create_project)(f"mission-{int(time.time() * 1000)}"))["project_id"]
     m = run(fn(tools.scanner_set_mission)(p, "Scan the exterior of the house", "exterior",
