@@ -974,7 +974,7 @@ async def run_recipe(recipe_id: str, project_id: str) -> str:
             "person": work + (", then scanner_advance_run it yourself: this step is yours (review = final), "
                               "the person reviews it with the result at the sign-off, and the bridge's checks catch a bad answer"
                               if s.get("review") == "final" else
-                              f"the bridge proposes it from step {s['propose_from']}; check it, show the person the evidence, "
+                              f", the bridge proposes it from step {s['propose_from']}; check it, show the person the evidence, "
                               "then call scanner_sign_off (the one question to the person)"
                               if s.get("propose_from") else
                               ", then scanner_propose it with a note and call scanner_sign_off for the person to confirm"),

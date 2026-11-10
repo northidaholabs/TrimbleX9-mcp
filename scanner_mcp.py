@@ -154,6 +154,8 @@ async def _stream_to(url: str, path: str) -> int:
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=5.0)) as c:
             async with c.stream("GET", url) as r:
+                if r.status_code >= 400:
+                    await r.aread()  # so the error can quote the body
                 r.raise_for_status()
                 with open(tmp, "wb") as fh:
                     async for chunk in r.aiter_bytes():
