@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install . pytest ${{ matrix.mcp }}
+      - run: pip install . pytest coverage ${{ matrix.mcp }}
       - name: Entry point
         run: command -v trimblex9-mcp
       - name: Bridge for the bridge-mode tests
@@ -42,7 +42,10 @@ jobs:
             -H "Accept: application/vnd.github.raw" > window-measurement.toml
           echo "X9_BRIDGE_BIN=$PWD/trimble-x9-bridge-$BRIDGE_TAG-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
           echo "X9_RECIPE=$PWD/window-measurement.toml" >> "$GITHUB_ENV"
-      - run: pytest -q -rs
+      - name: Tests, with coverage
+        run: coverage run --source=. --omit='tests/*' -m pytest -q -rs
+      - name: Coverage
+        run: coverage report -m --fail-under=93
       - name: Lint
         # Pinned: a new ruff release can add default rules. Raise it on purpose.
         run: pip install ruff==0.17.4 && ruff check .
