@@ -333,8 +333,8 @@ async def scanner_preview(scan_id: str) -> list:
         r = await c.get(f"{URL}/scans/{_seg(scan_id)}/preview", headers=_headers())
     _raise(r)
     w, h = _jpeg_dims(r.content)
-    return [f"Preview of scan {scan_id}: {w} x {h} px. Give scanner_aim boxes in these pixels (y down; "
-            f"x1 < x0 wraps across the panorama seam).", Image(data=r.content, format="jpeg")]
+    return [(f"Preview of scan {scan_id}: {w} x {h} px. Give scanner_aim boxes in these pixels (y down; "
+            f"x1 < x0 wraps across the panorama seam)."), Image(data=r.content, format="jpeg")]
 
 
 def _jpeg_dims(data: bytes) -> tuple[int, int]:
@@ -984,16 +984,16 @@ async def run_recipe(recipe_id: str, project_id: str) -> str:
         extra = f" — {s['instructions']}" if s.get("instructions") else ""
         lines.append(f"{n}. {title} [{s['kind']}: {how}]{extra}")
     lines += ["", "AI-first: you do the work and the person signs off once. Aim for one person intervention per run.",
-              "scanner_start_run asks the person once, in the chat, to allow scanning for the visit when the project "
+              ("scanner_start_run asks the person once, in the chat, to allow scanning for the visit when the project "
               "has no permission yet; don't ask them anything else before the sign-off. If a tool says the chat can't ask "
-              "(or the person never saw a question), ask them yourself in one line and pass their exact words as person_said.",
-              "At the sign-off, show the measurement's evidence image (scanner_measurement) and say what you checked, "
+              "(or the person never saw a question), ask them yourself in one line and pass their exact words as person_said."),
+              ("At the sign-off, show the measurement's evidence image (scanner_measurement) and say what you checked, "
               "then call scanner_sign_off: the person confirms or corrects there. If it reports the chat can't ask, "
-              "they use the bridge web UI (Approve the run, then Looks right).",
-              "Answer steps marked review = final yourself; for the other person steps, propose and let the person confirm. "
-              "Advance those for the person only if they tell you to go ahead without confirming.",
-              "Report each measured value with its uncertainty, the person interventions the run counted, "
-              "and say plainly if a check failed or a step was declined."]
+              "they use the bridge web UI (Approve the run, then Looks right)."),
+              ("Answer steps marked review = final yourself; for the other person steps, propose and let the person confirm. "
+              "Advance those for the person only if they tell you to go ahead without confirming."),
+              ("Report each measured value with its uncertainty, the person interventions the run counted, "
+              "and say plainly if a check failed or a step was declined.")]
     return "\n".join(lines)
 
 
@@ -1003,19 +1003,19 @@ async def survey_mission(project_id: str, goal: str) -> str:
     return "\n".join([
         f"The person wants: \"{goal}\" (project {project_id}). You run the visit; they carry the tripod and sign off once at the end.",
         "",
-        "0. scanner_processing: if no worker is listed and you haven't asked on this laptop before, ask once whether to "
-        "process scans on the laptop (faster) and start the worker if they agree; remember the answer.",
-        "1. scanner_set_mission: their words as goal, the kind (exterior, windows, room or custom), and done_when: "
+        ("0. scanner_processing: if no worker is listed and you haven't asked on this laptop before, ask once whether to "
+        "process scans on the laptop (faster) and start the worker if they agree; remember the answer."),
+        ("1. scanner_set_mission: their words as goal, the kind (exterior, windows, room or custom), and done_when: "
         "criteria concrete enough to check (spacing, which walls, no shadows on what). "
         "If the first station's view shows more than one thing their words could mean (two buildings, two windows, "
-        "two objects), ask them which one before the mission names it.",
-        "2. At each station: a full dome (scanner_start_scan; it asks the person once for the visit's permission), "
+        "two objects), ask them which one before the mission names it."),
+        ("2. At each station: a full dome (scanner_start_scan; it asks the person once for the visit's permission), "
         "then scanner_coverage and scanner_preview. Update the ledger with scanner_update_targets: add every target "
-        "you can see or infer (each facade, each window), mark what this station covered with its scan id, keep the rest open.",
-        "   After each station, show the person scanner_minimap (the map so far) with a line on what changed. "
+        "you can see or infer (each facade, each window), mark what this station covered with its scan id, keep the rest open."),
+        ("   After each station, show the person scanner_minimap (the map so far) with a line on what changed. "
         "From the second station on, the bridge registers each dome into one frame by itself: read scanner_registration "
         "(wait while registering_job_id is set). Give each facade target its wall_id from the plan; the bridge then marks "
-        "facades covered from the geometry, so don't mark them by eye.",
+        "facades covered from the geometry, so don't mark them by eye."),
         ("3. While targets are open: choose the next station for what is still open, not the biggest shadow "
         "(the plan shows open walls in red; scanner_wall_face gives their unseen stretches). "
         "Keep each new station in sight of walls an earlier station saw, or it can't be registered; "
@@ -1029,8 +1029,8 @@ async def survey_mission(project_id: str, goal: str) -> str:
         "4. A target you can't cover (a locked yard, a neighbour's wall) is declined, with the reason.",
         "5. When nothing is open: scanner_ready_to_leave with a two-or-three-line summary; the person signs off.",
         "",
-        "Ask the person nothing else, except which one when the view shows more than one thing the job could mean. "
-        "Report at the end: stations used, the ledger, and anything declined.",
+        ("Ask the person nothing else, except which one when the view shows more than one thing the job could mean. "
+        "Report at the end: stations used, the ledger, and anything declined."),
     ])
 
 

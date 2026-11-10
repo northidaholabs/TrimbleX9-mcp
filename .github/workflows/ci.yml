@@ -28,6 +28,21 @@ jobs:
       - run: pip install . pytest ${{ matrix.mcp }}
       - name: Entry point
         run: command -v trimblex9-mcp
-      - run: pytest -q
-      - name: Lint (non-gating)
-        run: pip install ruff && ruff check . || true
+      - name: Bridge for the bridge-mode tests
+        # A released bridge and the recipe from the same tag. Raise BRIDGE_TAG with each bridge release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRIDGE_TAG: v0.15.0
+        run: |
+          mkdir -p "$RUNNER_TEMP/bridge" && cd "$RUNNER_TEMP/bridge"
+          gh release download "$BRIDGE_TAG" -R northidaholabs/trimble-x9-bridge --pattern "*x86_64-unknown-linux-gnu.tar.gz*"
+          sha256sum -c ./*.sha256
+          tar -xzf ./*.tar.gz
+          gh api "repos/northidaholabs/trimble-x9-bridge/contents/crates/x9-bridge/tests/recipes/window-measurement.toml?ref=$BRIDGE_TAG" \
+            -H "Accept: application/vnd.github.raw" > window-measurement.toml
+          echo "X9_BRIDGE_BIN=$PWD/trimble-x9-bridge-$BRIDGE_TAG-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
+          echo "X9_RECIPE=$PWD/window-measurement.toml" >> "$GITHUB_ENV"
+      - run: pytest -q -rs
+      - name: Lint
+        # Pinned: a new ruff release can add default rules. Raise it on purpose.
+        run: pip install ruff==0.17.4 && ruff check .
