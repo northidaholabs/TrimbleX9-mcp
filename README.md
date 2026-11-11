@@ -605,5 +605,6 @@ bridge mode and reuses the download-path helpers from `scanner_mcp.py`.
 
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-GNU Affero General Public License v3.0 or later (SPDX `AGPL-3.0-or-later`; see `LICENSE`).
+This project is open source under AGPL-3.0-or-later. See `LICENSE`.
+A commercial license is available for companies that want to embed or host it without AGPL obligations. Contact contact@northidaholabs.com.
 Releases published before this change remain under MIT.
