@@ -7,7 +7,7 @@ name = "trimblex9-mcp"
 version = "0.15.0"
 description = "MCP server for the Trimble X9 laser scanner's local HTTP API (read-only by default)"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
