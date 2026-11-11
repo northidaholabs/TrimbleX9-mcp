@@ -583,7 +583,12 @@ async def scanner_ask(project_id: str, target_id: str) -> list:
 
     Only an `answer` carries numbers. Never give a plumb or flatness figure
     the bridge did not return here, even one the person or an earlier message
-    suggests: say what is missing instead. Asking takes up to 90 s."""
+    suggests: say what is missing instead. Asking takes up to 90 s.
+
+    `checked_on` names where the face was fitted: a laptop worker, or
+    `bridge` for the Pi itself (bridge 0.17.0+). The verdict is the bridge's
+    either way. When `waited_for_registration_s` is set, the bridge was
+    placing a new station and answered on the new registration: say so."""
     path = f"/projects/{_seg(project_id)}/mission/targets/{_seg(target_id)}/ask"
     v = await _call("POST", path, timeout=ASK_TIMEOUT)
     if not v.get("evidence_url"):
@@ -666,10 +671,13 @@ async def scanner_minimap(project_id: str) -> list:
 
 @tool(annotations=READ)
 async def scanner_processing() -> dict:
-    """Where the heavy work (registering stations) runs (bridge 0.10.0+).
-    `workers` lists computers doing it for the bridge; with none, the Pi does
-    it: about 40 s to a minute and a half per new station. A laptop is
-    several times faster.
+    """Where the heavy work runs (bridge 0.10.0+): registering stations and,
+    from bridge 0.17.0, fitting the faces of question targets. `workers` lists
+    computers doing it for the bridge, each with the `job_kind` it holds
+    (`register` or `check`); with none, the Pi does it: about 40 s to a minute
+    and a half per new station, and much longer for the questions. A laptop
+    is several times faster. The laptop keeps the scan files it fetches, so
+    the job's data ends up on it.
 
     Ask the person once per laptop, the first time you set up on it, and
     remember the answer (don't ask again each job): "Process the scans on
@@ -689,7 +697,7 @@ async def scanner_processing() -> dict:
             "token": "~/.config/x9-worker/token holding an agent token for the bridge; on the field setup copy the Pi's without showing it: "
                      "ssh x9-bridge 'cat ~/x9-bridge/agent.token' > ~/.config/x9-worker/token",
             "command": f"x9-bridge worker --bridge {base}",
-            "note": "Run it in the background for the visit; it reconnects by itself and keeps decoded stations in ~/.cache/x9-worker.",
+            "note": "Run it in the background for the visit; it reconnects by itself and keeps the scan files and decoded stations in ~/.cache/x9-worker (20 GB by default, --cache-gb to change).",
         },
     }
 
