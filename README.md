@@ -247,6 +247,8 @@ A typical direct-mode scan: `scanner_scan_modes` → `scanner_projects` (or
 | `scanner_update_targets` | write | Adds or updates ledger targets: open, covered (by stations), measured (with a measurement), declined (with a reason). A wall target can carry a question (`question: "plumb"`, bridge 0.15.0+), covered only by its answer, and the job's tolerance in the person's words |
 | `scanner_ask` | write | Asks a question target of the point cloud now (bridge 0.15.0+): `answer` with plumb (mm and inches, over what height) and flatness and the stations it rests on, and within or outside the target's tolerance; `not_yet` with what is missing and the planner `subject` for each unseen stretch, or `does_not_fit`. Numbers only with an answer. Up to 90 s |
 | `scanner_ready_to_leave` | write (asks the person) | Says the job is done (refused while a target is open) and asks the person to sign it off in the chat, or relays their words |
+| `scanner_save` | write | Saves the project to a folder on the laptop: scan files, each station's points in the project frame (COPC), registration, mission, and a manifest with checksums. The sign-off starts one by itself; this saves again (bridge 0.18.0+) |
+| `scanner_saved` | read | Where the project's data landed: the laptop, the folder, when, and each station (bridge 0.18.0+) |
 | `scanner_coverage` | read | A scan's point spacing and coverage plan (seen, shadows), with the plan image (bridge 0.6.0+) |
 | `scanner_propose` | write | Propose a person step's answer (e.g. the box around the window) for a person to confirm (bridge 0.3.0+) |
 | `scanner_cancel_run` | **destructive** | Stop a run and any scan in flight |

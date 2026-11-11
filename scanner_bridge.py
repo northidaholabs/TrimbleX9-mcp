@@ -674,10 +674,12 @@ async def scanner_processing() -> dict:
     """Where the heavy work runs (bridge 0.10.0+): registering stations and,
     from bridge 0.17.0, fitting the faces of question targets. `workers` lists
     computers doing it for the bridge, each with the `job_kind` it holds
-    (`register` or `check`); with none, the Pi does it: about 40 s to a minute
-    and a half per new station, and much longer for the questions. A laptop
-    is several times faster. The laptop keeps the scan files it fetches, so
-    the job's data ends up on it.
+    (`register`, `check`, or from bridge 0.18.0 `save`); with none, the Pi
+    does it: about 40 s to a minute and a half per new station, and much
+    longer for the questions. A laptop is several times faster. The laptop
+    keeps the scan files it fetches, so the job's data ends up on it, and
+    from bridge 0.18.0 it saves the project to a folder of its own
+    (scanner_save); a save waits for a laptop, it is never done on the Pi.
 
     Ask the person once per laptop, the first time you set up on it, and
     remember the answer (don't ask again each job): "Process the scans on
@@ -697,7 +699,7 @@ async def scanner_processing() -> dict:
             "token": "~/.config/x9-worker/token holding an agent token for the bridge; on the field setup copy the Pi's without showing it: "
                      "ssh x9-bridge 'cat ~/x9-bridge/agent.token' > ~/.config/x9-worker/token",
             "command": f"x9-bridge worker --bridge {base}",
-            "note": "Run it in the background for the visit; it reconnects by itself and keeps the scan files and decoded stations in ~/.cache/x9-worker (20 GB by default, --cache-gb to change).",
+            "note": "Run it in the background for the visit; it reconnects by itself and keeps the scan files and decoded stations in ~/.cache/x9-worker (20 GB by default, --cache-gb to change). Saved projects go to ~/X9 Projects (--save-dir to change).",
         },
     }
 
@@ -714,6 +716,74 @@ async def scanner_wall_face(project_id: str, wall_id: str = "", from_xy: list | 
     return await _call("POST", f"/projects/{_seg(project_id)}/registration/face", body)
 
 
+# -------------------------------------------------------------------- saves ---
+
+
+def _save_message(status: dict) -> str:
+    """One line on where a project's save stands, to pass on as it is."""
+    job, last = status.get("job"), status.get("last")
+    if job and job.get("phase") == "waiting for the laptop":
+        return ("Waiting for the laptop: no worker has taken the save yet. It waits however long that takes; "
+                "start a worker on the laptop (scanner_processing) to save it.")
+    if job:
+        return f"Saving now ({job.get('phase') or 'running'}); job {job['job_id']}."
+    if last:
+        gb = (last.get("bytes") or 0) / 1e9
+        return f"Saved on {last.get('worker')} at {last.get('saved_at')}: {last.get('folder')} ({last.get('files')} files, {gb:.1f} GB)."
+    return "Not saved to a laptop yet."
+
+
+async def _save_status(project_id: str) -> dict | None:
+    """The project's save, or None from a bridge before 0.18.0."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.get(f"{URL}/projects/{_seg(project_id)}/save", headers=_headers())
+    if r.status_code == 404:
+        return None
+    _raise(r)
+    status = r.json()
+    return status | {"message": _save_message(status)}
+
+
+@tool(annotations=WRITE)
+async def scanner_save(project_id: str) -> dict:
+    """Save the project to a folder on the laptop (bridge 0.18.0+): every
+    station's scan file as the scanner made it, each placed station's points
+    in the project frame as COPC (one file per station, `-unconfirmed` in the
+    name when registration doesn't trust it), the registration and mission,
+    and a manifest with every file's checksum. It goes under ~/X9 Projects on
+    the laptop running the worker, one folder per project.
+
+    The bridge saves by itself when the mission is signed off; call this to
+    save again (after more stations, or when the laptop wasn't connected) or
+    when the person asks. Only stations whose scan or position changed are
+    written again. A save waits for a laptop worker however long it takes; if
+    none is connected, say so and offer to start one (scanner_processing).
+    Returns the save job (scanner_wait_for_job follows it; its result names
+    the folder), the last save, and a `message` to pass on."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        r = await c.post(f"{URL}/projects/{_seg(project_id)}/save", headers=_headers())
+    if r.status_code == 404:
+        raise ToolError("Saving to the laptop needs bridge 0.18.0 or later; this bridge is older.")
+    _raise(r)
+    job = r.json()
+    status = await _save_status(project_id) or {}
+    return {"job": job, "last": status.get("last"), "message": _save_message({"job": job, "last": status.get("last")})}
+
+
+@tool(annotations=READ)
+async def scanner_saved(project_id: str) -> dict:
+    """Where the project's data landed (bridge 0.18.0+): `last` is the latest
+    save (the laptop, its folder, when, how many files and bytes, and each
+    station: its cloud, point count, whether it was kept from the save
+    before, and a note when it couldn't be saved), `job` a save still running
+    or waiting for a laptop, and `message` one line to pass on. Use it after
+    the sign-off, or when the person asks where the data is."""
+    status = await _save_status(project_id)
+    if status is None:
+        raise ToolError("Saving to the laptop needs bridge 0.18.0 or later; this bridge is older.")
+    return status
+
+
 class _SignOffJob(BaseModel):
     confirm: bool = Field(True, description="Sign the job off: nothing more will be added")
 
@@ -726,7 +796,9 @@ async def scanner_ready_to_leave(project_id: str, summary: str, person_said: str
     lines. The person is asked in the chat; if the chat can't ask, ask them
     yourself ("Ready to leave: … Sign it off?") and call again with
     `person_said` (their exact words, only if they agreed). This sign-off is
-    the job's last person intervention."""
+    the job's last person intervention. From bridge 0.18.0 the sign-off also
+    saves the project to the laptop: `save` says where that stands; pass its
+    message on."""
     m = await _call("GET", f"/projects/{_seg(project_id)}/mission")
     if m.get("state") != "ready":
         m = await _call("POST", f"/projects/{_seg(project_id)}/mission/ready", {"summary": summary})
@@ -736,7 +808,7 @@ async def scanner_ready_to_leave(project_id: str, summary: str, person_said: str
     if person_said.strip() and PERSON_TOKEN:
         done = await _call_as_person("POST", f"/projects/{_seg(project_id)}/mission/sign-off",
                                      {"confirmed_via": f"relayed by the agent: \u201c{person_said.strip()[:300]}\u201d"})
-        return {"signed_off": True, "relayed": True, "mission": done}
+        return await _with_save({"signed_off": True, "relayed": True, "mission": done}, project_id)
     ask_yourself = f"Ask the person in the chat: \"{question}\" If they agree, call scanner_ready_to_leave again with person_said = their words."
     if not _can_ask(ctx):
         if PERSON_TOKEN:
@@ -750,7 +822,17 @@ async def scanner_ready_to_leave(project_id: str, summary: str, person_said: str
     if not res.data.confirm:
         return {"signed_off": False, "asked": True, "ready": True, "message": "The person didn't sign it off yet; ask what is missing."}
     done = await _call_as_person("POST", f"/projects/{_seg(project_id)}/mission/sign-off", {"confirmed_via": "asked in the chat"})
-    return {"signed_off": True, "mission": done}
+    return await _with_save({"signed_off": True, "mission": done}, project_id)
+
+
+async def _with_save(out: dict, project_id: str) -> dict:
+    """A signed-off job's answer, with the save the sign-off started (bridge
+    0.18.0+). A save that can't be read doesn't undo the sign-off."""
+    try:
+        status = await _save_status(project_id)
+    except Exception:
+        status = None
+    return out | {"save": status} if status else out
 
 
 @tool(annotations=READ)

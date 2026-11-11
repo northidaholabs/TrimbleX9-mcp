@@ -317,6 +317,55 @@ def test_processing_without_a_url_names_the_field_setup(b, monkeypatch):
     assert out["runs_on"] == "the Pi" and out["start_worker"]["command"].endswith("--bridge http://10.55.0.1:8795")
 
 
+# ------------------------------------------------------------------- saves -----
+
+LAST = {"worker": "laptop", "folder": "/Users/crew/X9 Projects/Yard-p1", "saved_at": "2026-11-11T21:00:00Z",
+        "files": 5, "bytes": 2_400_000_000, "stations": [{"station": 1, "copc": "stations/station-01.copc.laz"}]}
+
+
+def test_save_starts_a_save_and_says_where_it_stands(b):
+    waiting = {"job_id": "j9", "kind": "save", "state": "running", "phase": "waiting for the laptop"}
+    route("POST", "/projects/p1/save", (202, waiting))
+    route("GET", "/projects/p1/save", (200, {"project_id": "p1", "last": LAST, "job": waiting}))
+    out = run(b, "scanner_save", "p1")
+    assert out["job"] == waiting and out["last"] == LAST
+    assert out["message"].startswith("Waiting for the laptop: no worker has taken the save yet.")
+    assert sent(-2)["method"] == "POST" and sent(-2)["path"] == "/projects/p1/save" and sent(-2)["body"] is None
+    route("POST", "/projects/p1/save", (202, dict(waiting, phase="saving on laptop")))
+    assert run(b, "scanner_save", "p1")["message"] == "Saving now (saving on laptop); job j9."
+
+
+def test_saved_reads_the_last_save(b):
+    route("GET", "/projects/p1/save", (200, {"project_id": "p1", "last": LAST, "job": None}))
+    out = run(b, "scanner_saved", "p1")
+    assert out["message"] == "Saved on laptop at 2026-11-11T21:00:00Z: /Users/crew/X9 Projects/Yard-p1 (5 files, 2.4 GB)."
+    route("GET", "/projects/p1/save", (200, {"project_id": "p1", "last": None, "job": None}))
+    assert run(b, "scanner_saved", "p1")["message"] == "Not saved to a laptop yet."
+
+
+def test_saving_on_an_older_bridge_or_with_nothing_registered_reads_plainly(b):
+    for name in ("scanner_save", "scanner_saved"):
+        with pytest.raises(b.ToolError, match="needs bridge 0.18.0 or later"):
+            run(b, name, "p1")
+    route("POST", "/projects/p1/save", (409, {"code": "conflict", "title": "Conflict",
+                                              "detail": "no station of this project is registered yet, so there is nothing to save"}))
+    with pytest.raises(b.BridgeError, match="nothing to save"):
+        run(b, "scanner_save", "p1")
+
+
+def test_ready_to_leave_reports_the_save_the_sign_off_starts(b, monkeypatch):
+    mission_setup(state="ready")
+    monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")
+    waiting = {"job_id": "j9", "phase": "waiting for the laptop"}
+    route("GET", "/projects/p1/save", (200, {"project_id": "p1", "last": None, "job": waiting}))
+    out = run(b, "scanner_ready_to_leave", "p1", "Done.", person_said="sign it")
+    assert out["signed_off"] and out["save"]["job"] == waiting
+    assert out["save"]["message"].startswith("Waiting for the laptop")
+    # A save that can't be read leaves the sign-off as it is.
+    route("GET", "/projects/p1/save", (500, {"code": "internal", "title": "Oops"}))
+    assert "save" not in run(b, "scanner_ready_to_leave", "p1", "Done.", person_said="sign it")
+
+
 # --------------------------------------------------------------- downloads -----
 
 def test_download_copc_export_and_named_scanfile(b):
@@ -422,8 +471,10 @@ def test_ready_to_leave_without_asking(b, monkeypatch):
     assert not any(s["path"].endswith("/ready") for s in Bridge.seen)
     out = run(b, "scanner_ready_to_leave", "p1", "North covered.", person_said="sign it")
     assert out == {"signed_off": True, "relayed": True, "mission": {"state": "signed_off"}}
-    assert sent()["auth"] == "Bearer person-tok"
-    assert sent()["body"] == {"confirmed_via": "relayed by the agent: “sign it”"}
+    # The sign-off, then a look at the save it started (none on this bridge).
+    assert sent(-2)["auth"] == "Bearer person-tok"
+    assert sent(-2)["body"] == {"confirmed_via": "relayed by the agent: “sign it”"}
+    assert sent()["path"] == "/projects/p1/save"
 
 
 @needs_elicitation
@@ -437,7 +488,7 @@ def test_ready_to_leave_asks_in_the_chat(b, monkeypatch):
     assert not any(s["path"].endswith("/sign-off") for s in Bridge.seen)
     out = run(b, "scanner_ready_to_leave", "p1", "Done.", ctx=Chat({}))
     assert out == {"signed_off": True, "mission": {"state": "signed_off"}}
-    assert sent()["body"] == {"confirmed_via": "asked in the chat"}
+    assert sent(-2)["body"] == {"confirmed_via": "asked in the chat"}
 
 
 def run_setup(run_doc, recipe_steps):
