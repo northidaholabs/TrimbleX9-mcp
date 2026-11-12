@@ -789,19 +789,20 @@ async def scanner_saved(project_id: str) -> dict:
 # --------------------------------------------------- lists and counting ---
 
 LIST_NEEDS = "Lists and counting need bridge 0.19.0 or later; this bridge is older."
+SORT_NEEDS = "Sorting needs bridge 0.20.0 or later; this bridge is older."
 
 
 async def _call_list(method: str, path: str, body=None, *, person: bool = False, timeout=TIMEOUT,
-                     content: bytes | None = None, params=None, ctype: str = ""):
+                     content: bytes | None = None, params=None, ctype: str = "", needs: str = LIST_NEEDS):
     """A list or count route. The bridge names what it didn't find (no
     mission, no record); a route it doesn't have answers an empty 404: an
-    older bridge."""
+    older bridge, said as `needs`."""
     headers = {"Authorization": f"Bearer {PERSON_TOKEN if person else TOKEN}"} | ({"Content-Type": ctype} if ctype else {})
     async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.request(method, f"{URL}{path}", json=body if content is None else None, content=content,
                             params=params, headers=headers)
     if r.status_code == 404 and not r.content.strip():
-        raise ToolError(LIST_NEEDS)
+        raise ToolError(needs)
     _raise(r)
     return r.json() if r.content else None
 
@@ -810,16 +811,21 @@ class _Confirm(BaseModel):
     confirm: bool = Field(True, description="Yes, that is right")
 
 
-async def _ask_person(ctx, question: str, person_said: str, call_again: str) -> tuple[str | None, dict | None]:
+WEB_UI = "A person does this in the bridge web UI; the agent can't."
+
+
+async def _ask_person(ctx, question: str, person_said: str, call_again: str,
+                      no_person: str = WEB_UI) -> tuple[str | None, dict | None]:
     """Ask the person in the chat. Returns how their yes reached the bridge
-    (`confirmed_via`), or a reply to give the agent instead."""
+    (`confirmed_via`), or a reply to give the agent instead. `no_person`: what
+    to say when this server has no person token."""
     if person_said.strip() and PERSON_TOKEN:
         return f"relayed by the agent: \u201c{person_said.strip()[:300]}\u201d", None
     ask_yourself = f'Ask the person in the chat: "{question}" If they agree, call {call_again} again with person_said = their words.'
     if not _can_ask(ctx):
         if PERSON_TOKEN:
             return None, {"done": False, "asked": False, "message": f"This chat can't ask the person directly. {ask_yourself}"}
-        return None, {"done": False, "asked": False, "message": "A person does this in the bridge web UI; the agent can't."}
+        return None, {"done": False, "asked": False, "message": no_person}
     res = await ctx.elicit(message=question, schema=_Confirm)
     if res.action != "accept":
         return None, {"done": False, "asked": True, "action": res.action,
@@ -831,29 +837,125 @@ async def _ask_person(ctx, question: str, person_said: str, call_again: str) -> 
 
 @tool(annotations=WRITE)
 async def scanner_load_list(project_id: str, schedule_csv: str = "", list_json: dict | None = None,
-                            revision: str = "A", title: str = "") -> dict:
+                            revision: str = "A", title: str = "", itp_csv: str = "", list_id: str = "") -> dict:
     """Load the list the job must document (bridge 0.19.0+): it becomes the
-    project's mission, one ledger target per line. Give either
+    project's mission, one ledger target per line. Give one of
 
     - `schedule_csv`: a door and window schedule as the person gave it, with
       the columns mark, type (window, door, opening), width, height,
       tolerance, wall. Sizes carry their unit (914 mm, 36 in, 3'-0") unless
       the column says it (width_mm, width_in). Each mark becomes a line that
-      asks the opening's size. `revision` names the schedule's revision; a
-      later revision keeps the answers of the lines it didn't change.
+      asks the opening's size.
+    - `itp_csv` (bridge 0.20.0+): an inspection and test plan's spreadsheet,
+      with the columns line, group, activity, requirement, reference, method
+      (dimensional, visual, test, review), tolerance, record, and one column
+      per party whose cells are H, W, R, S or blank. Name a party's role in
+      its header: "checker (client)". Its lines arrive unsorted: propose
+      their sorting with scanner_sort_lines before anything else. `list_id`
+      names the plan, so later revisions are read against it (default itp).
     - `list_json`: a list in the bridge's list format (specs/list-mission).
+      The sortings in it (a line's evidence, question and tolerance
+      arithmetic) arrive as proposals, those lines unsorted, until the
+      person confirms them with scanner_sort_lines; bind no line before.
 
-    The bridge refuses a schedule with a missing size, an unknown type or a
-    mark twice, and says which row: tell the person, and load it again fixed.
-    Each line then waits for a person to bind it to the wall it is on
-    (scanner_bind_lines)."""
+    `revision` names the list's revision; a later revision keeps the answers
+    of the lines it didn't change. The bridge refuses a row it can't read
+    and says which: tell the person, and load it again fixed. `notes` are
+    for the person (a party read without a role). A measured line then waits
+    for a person to bind it to the wall it is on (scanner_bind_lines)."""
     path = f"/projects/{_seg(project_id)}/list"
-    if bool(schedule_csv.strip()) == (list_json is not None):
-        raise ToolError("give the schedule as schedule_csv, or a list as list_json (one of them)")
+    if sum(map(bool, (schedule_csv.strip(), itp_csv.strip(), list_json is not None))) != 1:
+        raise ToolError("give the schedule as schedule_csv, a plan as itp_csv, or a list as list_json (one of them)")
     if list_json is not None:
         return await _call_list("PUT", path, body=list_json)
-    params = {"revision": revision} | ({"title": title} if title.strip() else {})
-    return await _call_list("PUT", path, content=schedule_csv.encode(), params=params, ctype="text/csv")
+    params = {"revision": revision} | ({"title": title} if title.strip() else {}) | ({"list_id": list_id.strip()} if list_id.strip() else {})
+    return await _call_list("PUT", path, content=(schedule_csv or itp_csv).encode(), params=params, ctype="text/csv")
+
+
+@tool(annotations=READ)
+async def scanner_list_lines(project_id: str) -> dict:
+    """The project's list line by line (bridge 0.19.0+): each line's
+    requirement, method, `sorted`, its grade of `evidence` and `question`
+    once sorted, `status` and `reason`, and a sorting `proposed` and not yet
+    confirmed. `unsorted` names the lines no person has sorted (bridge
+    0.20.0+): propose those with scanner_sort_lines."""
+    return await _call_list("GET", f"/projects/{_seg(project_id)}/list")
+
+
+def _tolerance_said(t: dict) -> str:
+    """The tolerance's words and the arithmetic the bridge will use."""
+    parts = []
+    for st in t.get("steps") or []:
+        parts.append(f"{st['mm']} mm" + (f" up to {st['up_to_m']} m" if st.get("up_to_m") is not None else " above that"))
+    if t.get("mm_per_m") is not None:
+        parts.append(f"{t['mm_per_m']} mm per m")
+    if t.get("max_mm") is not None:
+        parts.append(f"at most {t['max_mm']} mm")
+    return f"{t['words']} ({', '.join(parts)})" if parts else t["words"]
+
+
+def _question_said(q: dict) -> str:
+    """The question's kind, with the opening it expects and any thresholds."""
+    out = q["kind"]
+    if o := q.get("opening"):
+        out += f" ({o.get('type')} {o.get('width_mm')} × {o.get('height_mm')} mm)"
+    if th := q.get("thresholds"):
+        out += " (" + ", ".join(f"{k} {v}" for k, v in th.items()) + ")"
+    return out
+
+
+def _sorting_said(s: dict) -> str:
+    tol = s.get("tolerance")
+    return f"{s['line_id']} {s['evidence']} {_question_said(s['question'])}" + (
+        f" to {_tolerance_said(tol)}" if tol else (", no tolerance" if s["evidence"] == "measured" else ""))
+
+
+NO_PERSON_SORT = ("The proposal is stored. A person sorts the lines: with SCANNER_PERSON_TOKEN set (an operator "
+                  "token) this chat asks them; without it they sort through the bridge's API, POST "
+                  "/v1/projects/{id}/list/sort with an operator token. The web UI has no sorting screen yet.")
+
+
+@tool(annotations=WRITE)
+async def scanner_sort_lines(project_id: str, sortings: list, person_said: str = "", ctx: Context = None) -> dict:
+    """Propose how list lines are sorted, and have the person confirm it
+    (bridge 0.20.0+). You propose; a person sorts. Per line, from its own
+    words: {"line_id", "evidence", "question": {"kind"}, "tolerance"}.
+
+    - `evidence`: measured (the scanner answers from points; questions
+      plumb, flatness, opening, and height, clearance, low_spots, map, which
+      the bridge doesn't ask yet), seen (question photo) or attested
+      (question statement). Never propose more than the line's method
+      carries: dimensional can be measured, visual seen, test and review
+      attested. When unsure, propose the lower grade.
+    - `tolerance`: the line's tolerance words as the list gives them, with
+      the arithmetic: "a quarter inch in ten feet" is {"words": …, "steps":
+      [{"up_to_m": 3.05, "mm": 6.4}]}; a rate is mm_per_m (and max_mm).
+    - A measured plumb line with no tolerance in the list: ask the person
+      "plumb to what?" first. Sorted without one, it records a figure with no
+      call.
+    - A line you can't sort from its words: leave it out, and ask the
+      person what it asks for.
+
+    The bridge checks each sorting and returns `notes`: put them to the
+    person with the proposal, which shows each tolerance's arithmetic. The
+    person is asked in the chat; if the chat can't ask, ask them yourself and
+    call again with the same sortings and `person_said` (their exact words,
+    only if they agreed). Their yes sorts exactly the sortings put to them.
+    To change a line they disagree with, call again with that line as they
+    want it. A line sorted differently from before starts again, open."""
+    items = [dict(s) for s in sortings]
+    if not items:
+        raise ToolError("sortings: at least one {line_id, evidence, question, tolerance}")
+    path = f"/projects/{_seg(project_id)}/list"
+    proposed = await _call_list("POST", f"{path}/proposal", {"sortings": items}, needs=SORT_NEEDS)
+    notes = [n for p in proposed.get("proposed", []) for n in p.get("notes", [])]
+    said = "; ".join(_sorting_said(s) for s in items)
+    question = f"Sort the lines: {said}?" + (f" Note: {' '.join(notes)}" if notes else "")
+    via, reply = await _ask_person(ctx, question, person_said, "scanner_sort_lines", no_person=NO_PERSON_SORT)
+    if reply:
+        return reply | {"proposed": proposed}
+    return {"done": True} | await _call_list("POST", f"{path}/sort", {"sortings": items, "confirmed_via": via},
+                                             person=True, needs=SORT_NEEDS)
 
 
 @tool(annotations=READ)

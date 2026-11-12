@@ -669,6 +669,75 @@ def test_binding_and_matching_are_the_persons(b, monkeypatch):
         run(b, "scanner_bind_lines", "p1", lines=["W1"], wall_id="w3", person_said="yes")
 
 
+ITP = "line,activity,requirement,method,tolerance,checker (client)\n1.1,Facade,Plumb,dimensional,a quarter inch in ten feet,H\n"
+QUARTER = {"words": "a quarter inch in ten feet", "steps": [{"up_to_m": 3.05, "mm": 6.4}]}
+SORTINGS = [{"line_id": "1.1", "evidence": "measured", "question": {"kind": "plumb"}, "tolerance": QUARTER},
+            {"line_id": "2.1", "evidence": "measured", "question": {"kind": "plumb"}},
+            {"line_id": "5.1", "evidence": "seen", "question": {"kind": "photo"}}]
+
+
+def test_an_itp_loads_and_its_lines_list(b):
+    route("PUT", "/projects/p1/list", (200, {"unsorted": ["1.1"]}))
+    out = run(b, "scanner_load_list", "p1", itp_csv=ITP, list_id="job-7", revision="B")
+    assert out["unsorted"] == ["1.1"]
+    assert sent()["body"] == ITP and sent()["ctype"] == "text/csv" and sent()["query"] == "revision=B&list_id=job-7"
+    with pytest.raises(b.ToolError, match="one of them"):
+        run(b, "scanner_load_list", "p1", itp_csv=ITP, schedule_csv=SCHEDULE)
+    route("GET", "/projects/p1/list", (200, {"unsorted": ["1.1"], "proposed": {}}))
+    assert run(b, "scanner_list_lines", "p1")["unsorted"] == ["1.1"]
+    assert sent()["method"] == "GET" and sent()["auth"] == "Bearer agent-tok"
+
+
+def test_sorting_is_proposed_then_the_persons(b, monkeypatch):
+    route("POST", "/projects/p1/list/proposal", (200, {"proposed": [{"line_id": "1.1", "notes": []}, {"line_id": "2.1", "notes": ["line 2.1: no tolerance: the answer is a figure with no call (not_applicable). Plumb to what?"]},
+                                                                   {"line_id": "5.1", "notes": []}]}))
+    route("POST", "/projects/p1/list/sort", (200, {"sorted": ["1.1", "2.1", "5.1"], "as_proposed": 3}))
+    with pytest.raises(b.ToolError, match="at least one"):
+        run(b, "scanner_sort_lines", "p1", [])
+    # Without the person's token, the proposal is stored and the reply says how a person sorts.
+    out = run(b, "scanner_sort_lines", "p1", SORTINGS)
+    assert out["done"] is False and out["proposed"]["proposed"][0]["line_id"] == "1.1"
+    assert "SCANNER_PERSON_TOKEN" in out["message"] and "/list/sort" in out["message"] and "no sorting screen" in out["message"]
+    assert [s["path"] for s in Bridge.seen] == ["/v1/projects/p1/list/proposal"] and sent()["auth"] == "Bearer agent-tok"
+    assert sent()["body"] == {"sortings": SORTINGS}
+    monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")
+    out = run(b, "scanner_sort_lines", "p1", SORTINGS, ctx=Chat(can_ask=False))
+    assert ('"Sort the lines: 1.1 measured plumb to a quarter inch in ten feet (6.4 mm up to 3.05 m); 2.1 measured plumb, no tolerance;'
+            ' 5.1 seen photo? Note: line 2.1: no tolerance') in out["message"]
+    assert sent()["path"] == "/projects/p1/list/proposal"
+    out = run(b, "scanner_sort_lines", "p1", SORTINGS, person_said="yes, sort them")
+    assert out == {"done": True, "sorted": ["1.1", "2.1", "5.1"], "as_proposed": 3}
+    assert sent()["path"] == "/projects/p1/list/sort" and sent()["auth"] == "Bearer person-tok"
+    assert sent()["body"] == {"sortings": SORTINGS, "confirmed_via": "relayed by the agent: \u201cyes, sort them\u201d"}
+    route("POST", "/projects/p1/list/proposal", (404, b""))
+    with pytest.raises(b.ToolError, match="Sorting needs bridge 0.20.0 or later"):
+        run(b, "scanner_sort_lines", "p1", SORTINGS, person_said="yes")
+
+
+def test_the_arithmetic_is_said(b):
+    sb = b
+    assert sb._tolerance_said({"words": "w", "steps": [{"up_to_m": 3, "mm": 6}, {"mm": 10}]}) == "w (6 mm up to 3 m, 10 mm above that)"
+    assert sb._tolerance_said({"words": "w", "mm_per_m": 2, "max_mm": 12}) == "w (2 mm per m, at most 12 mm)"
+    assert sb._tolerance_said({"words": "w"}) == "w"
+    assert sb._sorting_said({"line_id": "W1", "evidence": "measured", "question": {"kind": "opening", "opening": {"type": "window", "width_mm": 914, "height_mm": 1219}},
+                             "tolerance": {"words": "6 mm", "max_mm": 6}}) == "W1 measured opening (window 914 × 1219 mm) to 6 mm (at most 6 mm)"
+    assert sb._sorting_said({"line_id": "3.1", "evidence": "measured", "question": {"kind": "low_spots", "thresholds": {"min_area_m2": 0.5, "min_depth_mm": 10}}}) == \
+        "3.1 measured low_spots (min_area_m2 0.5, min_depth_mm 10), no tolerance"
+
+
+@needs_elicitation
+def test_sorting_asks_in_the_chat(b, monkeypatch):
+    monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")
+    route("POST", "/projects/p1/list/proposal", (200, {"proposed": [{"line_id": "5.1", "notes": []}]}))
+    route("POST", "/projects/p1/list/sort", (200, {"sorted": ["5.1"]}))
+    chat = Chat({"confirm": False}, {})
+    assert "said no" in run(b, "scanner_sort_lines", "p1", SORTINGS[2:], ctx=chat)["message"]
+    assert sent()["path"] == "/projects/p1/list/proposal"
+    out = run(b, "scanner_sort_lines", "p1", SORTINGS[2:], ctx=chat)
+    assert out["done"] is True and chat.asked[1] == "Sort the lines: 5.1 seen photo?"
+    assert sent()["body"] == {"sortings": SORTINGS[2:], "confirmed_via": "asked in the chat"}
+
+
 @needs_elicitation
 def test_binding_and_matching_ask_in_the_chat(b, monkeypatch):
     monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")

@@ -251,7 +251,9 @@ A typical direct-mode scan: `scanner_scan_modes` → `scanner_projects` (or
 | `scanner_ready_to_leave` | write (asks the person) | Says the job is done (refused while a target is open) and asks the person to sign it off in the chat, or relays their words |
 | `scanner_save` | write | Saves the project to a folder on the laptop: scan files, each station's points in the project frame (COPC), registration, mission, and a manifest with checksums. The sign-off starts one by itself; this saves again (bridge 0.18.0+) |
 | `scanner_saved` | read | Where the project's data landed: the laptop, the folder, when, and each station (bridge 0.18.0+) |
-| `scanner_load_list` | write | Loads a door and window schedule, or a list, as the job's mission: one line per mark (bridge 0.19.0+) |
+| `scanner_load_list` | write | Loads a door and window schedule, an inspection and test plan's spreadsheet (bridge 0.20.0+), or a list, as the job's mission: one line per mark or row (bridge 0.19.0+) |
+| `scanner_list_lines` | read | The list line by line: requirement, whether it is sorted, its grade and question, status, a sorting proposed and waiting (bridge 0.19.0+; `unsorted` 0.20.0+) |
+| `scanner_sort_lines` | write (asks the person) | Proposes each line's grade of evidence, question and tolerance arithmetic, asks the person, then sorts exactly what they were shown with the person's token (bridge 0.20.0+) |
 | `scanner_record` | read | What each line of the list came to: status, conformance, evidence (bridge 0.19.0+) |
 | `scanner_bind_lines` | write | Asks the person, then binds list lines to the wall they are on (bridge 0.19.0+) |
 | `scanner_count` | write | Counts the openings on each bound wall, with sizes, a picture per wall, and proposed matches to the schedule (bridge 0.19.0+) |
