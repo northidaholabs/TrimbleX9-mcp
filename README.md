@@ -1,5 +1,7 @@
 # TrimbleX9-mcp
 
+This MCP server is how you ask your favorite chatbot to work with the scanner. Give an AI agent the objective for the job, and with trimble-x9-bridge it can plan each scanner setup from the last scan, tie each new station into the ones before it, and get real measurements back from the point cloud, like window sizes and wall heights.
+
 An [MCP](https://modelcontextprotocol.io) server for the **Trimble X9**
 terrestrial laser scanner. It gives an AI agent tools to read the scanner's
 status, list projects and scans, read the scan-mode menu, download point-cloud
