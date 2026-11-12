@@ -32,7 +32,7 @@ jobs:
         # A released bridge and the recipe from the same tag. Raise BRIDGE_TAG with each bridge release.
         env:
           GH_TOKEN: ${{ github.token }}
-          BRIDGE_TAG: v0.15.0
+          BRIDGE_TAG: v0.19.0
         run: |
           mkdir -p "$RUNNER_TEMP/bridge" && cd "$RUNNER_TEMP/bridge"
           gh release download "$BRIDGE_TAG" -R northidaholabs/trimble-x9-bridge --pattern "*x86_64-unknown-linux-gnu.tar.gz*"

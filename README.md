@@ -588,6 +588,8 @@ python3 -m venv .venv
 |---|---|---|
 | `tests/test_offline.py` | nothing (starts in-process stubs of the scanner and bridge APIs) | Direct mode with actuation on: delete by UUID across renumbering, local launch validation, area-scan echo check, cancel on a mismatched echo, `scanner_preview_to_angles` including the seam wrap, launch and delete refused while busy, readable errors for truncated `.tzf`/JPEG files, non-JSON replies and an unreachable scanner, plain default download names, Wi-Fi key masking. Bridge helpers: ids escaped in URL paths, sanitised default download names, readable errors for non-JSON and non-problem replies |
 | `tests/test_bridge_mode.py` | `X9_BRIDGE_BIN` | Bridge mode against a real bridge and scanner simulator: tool list has no approve/grant/delete tools, approval flow and progress, bridge error codes, an escaped id that would otherwise reach another endpoint, recipe prompt and run, field log |
+| `tests/test_bridge_offline.py` | nothing (scripts an in-process bridge stub) | The bridge-mode tools against the stub: the requests each sends, how it reads the replies, and the error paths, including asking the person, older bridges, lists and counting, and the save |
+| `tests/test_elicitation_forms.py` | an mcp SDK with elicitation (skipped on 1.7) | Every question the server asks the person is a flat form of primitive fields that chat apps accept |
 
 Bridge-mode tests are skipped unless these are set:
 
