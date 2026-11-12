@@ -249,6 +249,11 @@ A typical direct-mode scan: `scanner_scan_modes` → `scanner_projects` (or
 | `scanner_ready_to_leave` | write (asks the person) | Says the job is done (refused while a target is open) and asks the person to sign it off in the chat, or relays their words |
 | `scanner_save` | write | Saves the project to a folder on the laptop: scan files, each station's points in the project frame (COPC), registration, mission, and a manifest with checksums. The sign-off starts one by itself; this saves again (bridge 0.18.0+) |
 | `scanner_saved` | read | Where the project's data landed: the laptop, the folder, when, and each station (bridge 0.18.0+) |
+| `scanner_load_list` | write | Loads a door and window schedule, or a list, as the job's mission: one line per mark (bridge 0.19.0+) |
+| `scanner_record` | read | What each line of the list came to: status, conformance, evidence (bridge 0.19.0+) |
+| `scanner_bind_lines` | write | Asks the person, then binds list lines to the wall they are on (bridge 0.19.0+) |
+| `scanner_count` | write | Counts the openings on each bound wall, with sizes, a picture per wall, and proposed matches to the schedule (bridge 0.19.0+) |
+| `scanner_confirm_matches` | write | Asks the person which opening is which schedule line, then judges each line against its tolerance (bridge 0.19.0+) |
 | `scanner_coverage` | read | A scan's point spacing and coverage plan (seen, shadows), with the plan image (bridge 0.6.0+) |
 | `scanner_propose` | write | Propose a person step's answer (e.g. the box around the window) for a person to confirm (bridge 0.3.0+) |
 | `scanner_cancel_run` | **destructive** | Stop a run and any scan in flight |

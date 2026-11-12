@@ -38,9 +38,11 @@ class Bridge(http.server.BaseHTTPRequestHandler):
     def _handle(self):
         path, _, query = self.path.partition("?")
         n = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(n)) if n else None
+        raw = self.rfile.read(n) if n else b""
+        ctype = self.headers.get("Content-Type") or ""
+        body = (json.loads(raw) if "json" in ctype or not ctype else raw.decode()) if raw else None
         Bridge.seen.append({"method": self.command, "path": path, "query": query, "body": body,
-                            "auth": self.headers.get("Authorization")})
+                            "auth": self.headers.get("Authorization"), "ctype": ctype})
         reply = Bridge.routes.get((self.command, path), (404, {"code": "not_found", "title": "No such thing"}))
         if isinstance(reply, list):
             reply = reply.pop(0) if len(reply) > 1 else reply[0]
@@ -594,3 +596,90 @@ def test_main_needs_url_and_token(b, monkeypatch):
     monkeypatch.setattr(b, "TOKEN", "agent-tok")
     b.main()
     assert ran == [True]
+
+
+# ------------------------------------------------------- lists and counting ---
+
+SCHEDULE = "mark,type,width,height,tolerance,wall\nW1,window,3'-0\",4'-0\",1/4 in,North\n"
+
+
+def test_load_list_sends_the_schedule_or_the_list(b):
+    route("PUT", "/projects/p1/list", (200, {"lines": [{"line_id": "W1", "status": "open"}]}))
+    out = run(b, "scanner_load_list", "p1", schedule_csv=SCHEDULE, revision="B", title="Level 1")
+    assert out["lines"][0]["line_id"] == "W1"
+    assert sent()["body"] == SCHEDULE and sent()["ctype"] == "text/csv" and sent()["query"] == "revision=B&title=Level+1"
+    run(b, "scanner_load_list", "p1", list_json={"format": "nil-list"})
+    assert sent()["body"] == {"format": "nil-list"} and sent()["auth"] == "Bearer agent-tok"
+    for kw in ({}, {"schedule_csv": SCHEDULE, "list_json": {}}):
+        with pytest.raises(b.ToolError, match="one of them"):
+            run(b, "scanner_load_list", "p1", **kw)
+    route("PUT", "/projects/p1/list", (400, {"code": "invalid_request", "title": "Invalid", "detail": "row 2 (W1): no width"}))
+    with pytest.raises(b.BridgeError, match="row 2 \\(W1\\): no width"):
+        run(b, "scanner_load_list", "p1", schedule_csv=SCHEDULE)
+
+
+def test_count_returns_the_face_pictures_and_the_record_reads(b):
+    route("POST", "/projects/p1/count", (200, {"say": "3 openings found", "faces": [{"face_id": "f1"}, {"face_id": "f2"}]}))
+    route("GET", "/projects/p1/count/f1/image", (200, PNG, "image/png"))
+    out = run(b, "scanner_count", "p1")
+    assert json.loads(out[0])["say"] == "3 openings found"
+    assert len(out) == 2 and out[1].data == PNG, "f2 has no picture: left out"
+    route("GET", "/projects/p1/record", (200, {"format": "nil-list-record", "lines": []}))
+    assert run(b, "scanner_record", "p1")["format"] == "nil-list-record"
+
+
+def test_lists_on_an_older_bridge_say_so(b):
+    for method, path in [("PUT", "/projects/p1/list"), ("GET", "/projects/p1/record"), ("POST", "/projects/p1/count")]:
+        route(method, path, (404, b""))
+    for name, kw in [("scanner_load_list", {"schedule_csv": SCHEDULE}), ("scanner_record", {}), ("scanner_count", {})]:
+        with pytest.raises(b.ToolError, match="need bridge 0.19.0 or later"):
+            run(b, name, "p1", **kw)
+    # A 404 that names what is missing is the bridge's answer, passed on.
+    route("GET", "/projects/p1/record", (404, {"code": "not_found", "title": "Not found", "detail": "record (the mission wasn't made from a list)"}))
+    with pytest.raises(b.BridgeError, match="wasn't made from a list"):
+        run(b, "scanner_record", "p1")
+
+
+def test_binding_and_matching_are_the_persons(b, monkeypatch):
+    route("POST", "/projects/p1/list/bind", (200, {"bound": ["Window W1"]}))
+    route("POST", "/projects/p1/count/matches", (200, {"lines": []}))
+    with pytest.raises(b.ToolError, match="name the lines"):
+        run(b, "scanner_bind_lines", "p1", wall_id="w3")
+    with pytest.raises(b.ToolError, match="give the face as wall_id"):
+        run(b, "scanner_bind_lines", "p1", wall_id="w3", place="North", from_xy=[0, 0], to_xy=[1, 0])
+    with pytest.raises(b.ToolError, match="at least one"):
+        run(b, "scanner_confirm_matches", "p1", [])
+    # Without the person's token, the person does it in the web UI.
+    out = run(b, "scanner_bind_lines", "p1", wall_id="w3", place="North")
+    assert out["done"] is False and "bridge web UI" in out["message"] and not Bridge.seen
+    monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")
+    out = run(b, "scanner_bind_lines", "p1", wall_id="w3", place="North", ctx=Chat(can_ask=False))
+    assert 'Ask the person in the chat: "Bind the lines at North to wall w3?"' in out["message"] and not Bridge.seen
+    out = run(b, "scanner_bind_lines", "p1", place="North", from_xy=[0, 0], to_xy=[6, 0], person_said="yes, that wall")
+    assert out == {"done": True, "bound": ["Window W1"]}
+    assert sent()["auth"] == "Bearer person-tok"
+    assert sent()["body"] == {"lines": [], "place": "North", "from": [0, 0], "to": [6, 0], "confirmed_via": "relayed by the agent: \u201cyes, that wall\u201d"}
+    out = run(b, "scanner_confirm_matches", "p1", [{"line_id": "W1", "opening_id": "f1-2"}, {"line_id": "W2"}], ctx=Chat(can_ask=False))
+    assert '"Confirm the openings: W1 is f1-2; W2: no match?"' in out["message"]
+    run(b, "scanner_confirm_matches", "p1", [{"line_id": "W1", "opening_id": "f1-2"}], person_said="yes")
+    assert sent()["path"] == "/projects/p1/count/matches" and sent()["auth"] == "Bearer person-tok"
+    assert sent()["body"]["matches"] == [{"line_id": "W1", "opening_id": "f1-2"}]
+    route("POST", "/projects/p1/list/bind", (404, b""))
+    with pytest.raises(b.ToolError, match="need bridge 0.19.0 or later"):
+        run(b, "scanner_bind_lines", "p1", lines=["W1"], wall_id="w3", person_said="yes")
+
+
+@needs_elicitation
+def test_binding_and_matching_ask_in_the_chat(b, monkeypatch):
+    monkeypatch.setattr(b, "PERSON_TOKEN", "person-tok")
+    route("POST", "/projects/p1/list/bind", (200, {"bound": ["Window W1"]}))
+    route("POST", "/projects/p1/count/matches", (200, {"lines": []}))
+    chat = Chat("cancel", {"confirm": False}, {})
+    assert run(b, "scanner_bind_lines", "p1", lines=["W1", "W2"], wall_id="w3", ctx=chat)["action"] == "cancel"
+    assert "said no" in run(b, "scanner_bind_lines", "p1", lines=["W1", "W2"], wall_id="w3", ctx=chat)["message"]
+    assert not Bridge.seen
+    assert run(b, "scanner_bind_lines", "p1", lines=["W1", "W2"], wall_id="w3", ctx=chat)["done"] is True
+    assert chat.asked[0] == "Bind lines W1, W2 to wall w3?"
+    assert sent()["body"]["confirmed_via"] == "asked in the chat"
+    out = run(b, "scanner_confirm_matches", "p1", [{"line_id": "W1", "opening_id": "f1-2"}], ctx=Chat({}))
+    assert out["done"] is True and sent()["body"]["confirmed_via"] == "asked in the chat"

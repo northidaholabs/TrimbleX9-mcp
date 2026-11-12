@@ -47,6 +47,8 @@ VISIT_SCANS = 20
 TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 # An ask fits a face from full-resolution stations: up to 90 s on the Pi.
 ASK_TIMEOUT = httpx.Timeout(180.0, connect=5.0)
+# Counting reads every station that saw a bound wall; on the Pi alone that can take minutes.
+COUNT_TIMEOUT = httpx.Timeout(600.0, connect=5.0)
 
 mcp = FastMCP("trimblex9-bridge")
 
@@ -782,6 +784,169 @@ async def scanner_saved(project_id: str) -> dict:
     if status is None:
         raise ToolError("Saving to the laptop needs bridge 0.18.0 or later; this bridge is older.")
     return status
+
+
+# --------------------------------------------------- lists and counting ---
+
+LIST_NEEDS = "Lists and counting need bridge 0.19.0 or later; this bridge is older."
+
+
+async def _call_list(method: str, path: str, body=None, *, person: bool = False, timeout=TIMEOUT,
+                     content: bytes | None = None, params=None, ctype: str = ""):
+    """A list or count route. The bridge names what it didn't find (no
+    mission, no record); a route it doesn't have answers an empty 404: an
+    older bridge."""
+    headers = {"Authorization": f"Bearer {PERSON_TOKEN if person else TOKEN}"} | ({"Content-Type": ctype} if ctype else {})
+    async with httpx.AsyncClient(timeout=timeout) as c:
+        r = await c.request(method, f"{URL}{path}", json=body if content is None else None, content=content,
+                            params=params, headers=headers)
+    if r.status_code == 404 and not r.content.strip():
+        raise ToolError(LIST_NEEDS)
+    _raise(r)
+    return r.json() if r.content else None
+
+
+class _Confirm(BaseModel):
+    confirm: bool = Field(True, description="Yes, that is right")
+
+
+async def _ask_person(ctx, question: str, person_said: str, call_again: str) -> tuple[str | None, dict | None]:
+    """Ask the person in the chat. Returns how their yes reached the bridge
+    (`confirmed_via`), or a reply to give the agent instead."""
+    if person_said.strip() and PERSON_TOKEN:
+        return f"relayed by the agent: \u201c{person_said.strip()[:300]}\u201d", None
+    ask_yourself = f'Ask the person in the chat: "{question}" If they agree, call {call_again} again with person_said = their words.'
+    if not _can_ask(ctx):
+        if PERSON_TOKEN:
+            return None, {"done": False, "asked": False, "message": f"This chat can't ask the person directly. {ask_yourself}"}
+        return None, {"done": False, "asked": False, "message": "A person does this in the bridge web UI; the agent can't."}
+    res = await ctx.elicit(message=question, schema=_Confirm)
+    if res.action != "accept":
+        return None, {"done": False, "asked": True, "action": res.action,
+                      "message": f"No answer from the chat's question; some chat apps close it without showing it. If the person didn't see it: {ask_yourself}"}
+    if not res.data.confirm:
+        return None, {"done": False, "asked": True, "message": "The person said no; ask what is right."}
+    return "asked in the chat", None
+
+
+@tool(annotations=WRITE)
+async def scanner_load_list(project_id: str, schedule_csv: str = "", list_json: dict | None = None,
+                            revision: str = "A", title: str = "") -> dict:
+    """Load the list the job must document (bridge 0.19.0+): it becomes the
+    project's mission, one ledger target per line. Give either
+
+    - `schedule_csv`: a door and window schedule as the person gave it, with
+      the columns mark, type (window, door, opening), width, height,
+      tolerance, wall. Sizes carry their unit (914 mm, 36 in, 3'-0") unless
+      the column says it (width_mm, width_in). Each mark becomes a line that
+      asks the opening's size. `revision` names the schedule's revision; a
+      later revision keeps the answers of the lines it didn't change.
+    - `list_json`: a list in the bridge's list format (specs/list-mission).
+
+    The bridge refuses a schedule with a missing size, an unknown type or a
+    mark twice, and says which row: tell the person, and load it again fixed.
+    Each line then waits for a person to bind it to the wall it is on
+    (scanner_bind_lines)."""
+    path = f"/projects/{_seg(project_id)}/list"
+    if bool(schedule_csv.strip()) == (list_json is not None):
+        raise ToolError("give the schedule as schedule_csv, or a list as list_json (one of them)")
+    if list_json is not None:
+        return await _call_list("PUT", path, body=list_json)
+    params = {"revision": revision} | ({"title": title} if title.strip() else {})
+    return await _call_list("PUT", path, content=schedule_csv.encode(), params=params, ctype="text/csv")
+
+
+@tool(annotations=READ)
+async def scanner_record(project_id: str) -> dict:
+    """The record of the project's list (bridge 0.19.0+): each line's
+    `status` (open, not_yet, does_not_fit, answered, declined), with an
+    answer its `conformance` (conforming, non_conforming, neutral,
+    not_applicable) and evidence, with the bridge's `reason` otherwise. Give
+    each line's figures and calls as the record has them, never your own."""
+    return await _call_list("GET", f"/projects/{_seg(project_id)}/record")
+
+
+@tool(annotations=WRITE)
+async def scanner_bind_lines(project_id: str, wall_id: str = "", place: str = "", lines: list | None = None,
+                             from_xy: list | None = None, to_xy: list | None = None,
+                             person_said: str = "", ctx: Context = None) -> dict:
+    """Bind list lines to the wall face they are on (bridge 0.19.0+). A person
+    binds; you propose. Name the lines by `place` (the list's own words for
+    the wall, such as "North wall": every line there) or by `lines` (ids),
+    and the face by `wall_id` (from scanner_registration or the minimap) or
+    by `from_xy` and `to_xy` (project frame, m). Show the person which wall
+    you mean first (the minimap). The person is asked in the chat; if the
+    chat can't ask, ask them yourself and call again with `person_said`
+    (their exact words, only if they agreed). An opening line is then
+    counted on its face (scanner_count); a plumb line is asked of it
+    (scanner_ask)."""
+    ids = [str(x) for x in (lines or [])]
+    if not (place.strip() or ids):
+        raise ToolError("name the lines: place (the list's words for the wall) or lines (ids)")
+    if bool(wall_id.strip()) == (from_xy is not None and to_xy is not None):
+        raise ToolError("give the face as wall_id, or as from_xy and to_xy")
+    which = f"the lines at {place.strip()}" if place.strip() else "line" + ("s " if len(ids) > 1 else " ") + ", ".join(ids)
+    where = f"wall {wall_id.strip()}" if wall_id.strip() else f"the face from {from_xy} to {to_xy}"
+    via, reply = await _ask_person(ctx, f"Bind {which} to {where}?", person_said, "scanner_bind_lines")
+    if reply:
+        return reply
+    body = {"lines": ids, "confirmed_via": via} | ({"place": place.strip()} if place.strip() else {})
+    body |= {"wall_id": wall_id.strip()} if wall_id.strip() else {"from": from_xy, "to": to_xy}
+    return {"done": True} | await _call_list("POST", f"/projects/{_seg(project_id)}/list/bind", body, person=True)
+
+
+@tool(annotations=WRITE)
+async def scanner_count(project_id: str) -> list:
+    """Count the openings on every wall face the schedule's lines are bound to
+    (bridge 0.19.0+), and judge each line. Takes up to a few minutes on the
+    Pi. The reply has:
+
+    - `say`: the count in one or two sentences. Relay it as written.
+    - `faces`: each face's `openings` (`opening_id`, `looks_like`, `said`
+      with the size and uncertainty, or `misfit` with why it can't be
+      measured), the gaps `not_counted` (a recess) with why, `seen_share`,
+      and `unseen` stretches. Under 80% seen (`enough_seen` false) the count
+      is "at least" that many: say so, and plan a station for the unseen
+      stretch (scanner_plan_station, scanner_propose_station).
+    - `proposed`: matches the bridge suggests, line to opening, with `why`.
+      Show the person the face's picture (below, openings numbered) and put
+      the matches to them with scanner_confirm_matches. Never treat a match
+      as made until they confirm it.
+    - `lines`: each line's `status`, `reason`, and with an answer its
+      `conformance` and size. `not_on_schedule`: openings on a fully matched
+      face that no line is.
+
+    Give sizes and calls only as the bridge gives them."""
+    path = f"/projects/{_seg(project_id)}/count"
+    v = await _call_list("POST", path, timeout=COUNT_TIMEOUT)
+    out = [json.dumps(v, indent=2)]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as c:
+        for f in v.get("faces", []):
+            r = await c.get(f"{URL}{path}/{_seg(f['face_id'])}/image", headers=_headers())
+            if r.status_code < 400:
+                out.append(Image(data=r.content, format="png"))
+    return out
+
+
+@tool(annotations=WRITE)
+async def scanner_confirm_matches(project_id: str, matches: list, person_said: str = "", ctx: Context = None) -> dict:
+    """Put matches to the person: which counted opening is which schedule
+    line (bridge 0.19.0+). `matches`: [{"line_id": "W1", "opening_id":
+    "f1-2"}, …]; an `opening_id` of null undoes a line's match. Show them the
+    face's picture from scanner_count first. The person is asked in the
+    chat; if the chat can't ask, ask them yourself and call again with
+    `person_said` (their exact words, only if they agreed). The reply is the
+    count with each matched line judged: give its status, size and
+    conformance as written."""
+    items = [{"line_id": str(m["line_id"]), "opening_id": m.get("opening_id")} for m in matches]
+    if not items:
+        raise ToolError("matches: at least one {line_id, opening_id}")
+    said = "; ".join(f"{m['line_id']} is {m['opening_id']}" if m["opening_id"] else f"{m['line_id']}: no match" for m in items)
+    via, reply = await _ask_person(ctx, f"Confirm the openings: {said}?", person_said, "scanner_confirm_matches")
+    if reply:
+        return reply
+    return {"done": True} | await _call_list("POST", f"/projects/{_seg(project_id)}/count/matches",
+                                             {"matches": items, "confirmed_via": via}, person=True)
 
 
 class _SignOffJob(BaseModel):
